@@ -71,7 +71,7 @@ ALL_LOCATIONS = sorted({
     "XME1", "XNJ2", "XPH7", "RDU2", "TEB9", "TEB4",
     "MEM1", "XLX1", "XRD4", "LAS1", "FWA4", "MDW2",
     "XMI3", "CLT2", "HGR6", "ABE4", "XRI3", "BOS7",
-    "IB", "CLOSED",
+    "IB", "CLOSED", "Swap",
 })
 
 # ---- HELPERS ----
