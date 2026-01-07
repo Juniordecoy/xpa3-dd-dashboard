@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aspire XDock - XPA3</title>
+
+  <style>
+    :root{
+      --bg: #ffffff;          /* page background */
+      --panel: #0f172a;       /* blue-ish table cards */
+      --text: #e5e7eb;        /* text inside tables */
+      --muted: #cbd5e1;       /* table header text */
+      --line: #1e293b;        /* table borders */
+      --chip: #1e293b;        /* truck pills */
+    }
+
+    * { box-sizing: border-box; }
+    body { font-size: 14px; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: #000; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 40px; }
+
+    .header { display:flex; gap:12px; flex-wrap:wrap; align-items:baseline; justify-content:space-between; margin-bottom: 16px; }
+    .title { font-size: 20px; font-weight: 800; letter-spacing: 0.3px; color: #000;}
+    .timestamp { color: #000; font-size: 14px; }
+
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 760px){ .grid { grid-template-columns: 1fr; } }
+
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow:hidden; }
+    .card h2 { margin:0; padding: 10px 12px; font-size: 15px; border-bottom: 1px solid var(--line); color: #ffffff; }
+
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--text); }
+    th { text-align:left; color: var(--muted); font-weight: 700; background: rgba(255,255,255,0.04); }
+    tr:last-child td { border-bottom: none; }
+
+    .col-num { width: 70px; }
+    .col-loc { width: 90px; }
+
+    .chip{
+      display:inline-block;
+      padding:3px 8px;
+      border-radius:999px;
+      border: 1px solid var(--line);
+      font-weight:800;
+      font-size:11px;
+      letter-spacing:0.3px;
+      color:#fff;
+    }
+
+    /* Truck colors */
+    .chip-azng{ background:#1d4ed8; }  /* blue */
+    .chip-aznu{ background:#7c3aed; }  /* purple */
+    .chip-jbhu{ background:#16a34a; }  /* green */
+    .chip-xpou{ background:#f59e0b; color:#111827; } /* amber w/ dark text */
+
+    .empty { color: var(--muted); font-style: italic; }
+
+    .actions { margin-top: 14px; display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 760px){ .actions { grid-template-columns: 1fr; } }
+
+    form { padding: 14px; }
+    .form-title { font-weight: 800; margin-bottom: 10px; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    input, select {
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      color: #111827;
+      padding: 10px 10px;
+      border-radius: 10px;
+      min-width: 140px;
+      outline: none;
+    }
+    input::placeholder { color: #6b7280; }
+    .btn {
+      background: var(--btn);
+      border: none;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .btn.secondary { background: var(--btn2); }
+    .note { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    /* Force dropdown text color */
+    select {
+      color: #000;              /* selected value text */
+      background-color: #fff;   /* dropdown field background */
+    }
+
+    select option {
+      color: #000;              /* dropdown list text */
+      background-color: #fff;   /* dropdown list background */
+    }
+    /* Closed door styling */
+    .loc-closed {
+      color: #dc2626;        /* red */
+      font-weight: 700;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="title">Aspire XDock - XPA3</div>
+      <div class="timestamp">Updated: {{ timestamp }}</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Front</h2>
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">Door</th>
+              <th class="col-loc">Location</th>
+              <th>Truck</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for door, loc, truck in front_rows %}
+            <tr>
+              <td>{{ door }}</td>
+              <td class="
+                {% if loc == 'CLOSED' %}loc-closed
+                {% elif not loc.isalnum() %}empty
+                {% endif %}
+              ">{{ loc }}</td>
+              <td>
+                {% if truck %}
+                  <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
+                  {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Back</h2>
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">Door</th>
+              <th class="col-loc">Location</th>
+              <th>Truck</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for door, loc, truck in back_rows %}
+            <tr>
+              <td>{{ door }}</td>
+              <td class="
+                {% if loc == 'CLOSED' %}loc-closed
+                {% elif not loc.isalnum() %}empty
+                {% endif %}
+              ">{{ loc }}</td>
+              <td>
+                {% if truck %}
+                  <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
+                  {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ACTIONS -->
+    <div class="actions">
+      <div class="card">
+        <h2>Update door location</h2>
+        <form method="POST" action="/update-location">
+          <div class="row">
+            <div>
+              <label for="door1">Door #</label>
+              <input id="door1" name="door" placeholder="e.g. 127" />
+            </div>
+            <div>
+              <label for="loc1">Location</label>
+              <select id="loc1" name="location">
+                <option value="—">— (blank)</option>
+                {% for loc in location_options %}
+                  <option value="{{ loc }}">{{ loc }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="align-self:flex-end;">
+              <button class="btn" type="submit">Update</button>
+            </div>
+          </div>
+          <div class="note">
+            Tip: Put <b>—</b> to clear a door. Location auto-uppercase.
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Force truck type (override)</h2>
+        <form method="POST" action="/override-truck">
+          <div class="row">
+            <div>
+              <label for="door2">Door #</label>
+              <input id="door2" name="door" placeholder="e.g. 125" />
+            </div>
+            <div>
+              <label for="truck2">Truck type</label>
+              <select id="truck2" name="truck">
+                <option value="AUTO">AUTO (use location)</option>
+                {% for t in truck_types %}
+                  <option value="{{ t }}">{{ t }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="align-self:flex-end;">
+              <button class="btn secondary" type="submit">Apply</button>
+            </div>
+          </div>
+          <div class="note">
+            “AUTO” clears the forced override and goes back to location-based logic.
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
