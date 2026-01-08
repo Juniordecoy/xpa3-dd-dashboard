@@ -2,7 +2,20 @@ from flask import Flask, render_template, request, redirect, url_for
 from datetime import datetime
 import os
 
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
+
 app = Flask(__name__)
+
+def get_db_conn():
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        return None
+    # Render sometimes gives postgres:// but psycopg2 wants postgresql://
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(db_url)
 
 # ---- DATA (your board) ----
 front = {
@@ -75,6 +88,65 @@ ALL_LOCATIONS = sorted({
 })
 
 # ---- HELPERS ----
+def init_db():
+    conn = get_db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS door_state (
+                    door INTEGER PRIMARY KEY,
+                    location TEXT,
+                    truck_override TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+    conn.close()
+
+def load_state_from_db():
+    conn = get_db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT door, location, truck_override FROM door_state;")
+            rows = cur.fetchall()
+
+    conn.close()
+
+    # apply rows to your in-memory dicts
+    for r in rows:
+        d = int(r["door"])
+        loc = r["location"] or "—"
+        trk = (r["truck_override"] or "").strip().upper() or None
+
+        if d in front:
+            front[d] = loc
+        elif d in back:
+            back[d] = loc
+
+        if trk:
+            door_truck_override[d] = trk
+        else:
+            door_truck_override.pop(d, None)
+
+def save_door_to_db(door_num: int, location: str, truck_override: str | None):
+    conn = get_db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO door_state (door, location, truck_override, updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (door) DO UPDATE SET
+                    location = EXCLUDED.location,
+                    truck_override = EXCLUDED.truck_override,
+                    updated_at = CURRENT_TIMESTAMP;
+            """, (door_num, location, truck_override))
+    conn.close()
+
 def normalize_loc(loc: str) -> str:
     return (loc or "").strip().upper()
 
@@ -120,6 +192,9 @@ def build_location_options():
 
     return sorted(locs)
 
+init_db()
+load_state_from_db()
+
 # ---- ROUTES ----
 @app.get("/")
 def index():
@@ -151,6 +226,8 @@ def update_location():
 
     door_num = int(door)
     doors = all_doors()
+    save_door_to_db(door_num, loc, door_truck_override.get(door_num))
+
     if door_num not in doors:
         return redirect(url_for("index"))
 
@@ -179,6 +256,8 @@ def override_truck():
         return redirect(url_for("index"))
 
     door_num = int(door)
+    save_door_to_db(door_num, all_doors()[door_num], door_truck_override.get(door_num))
+
     if door_num not in all_doors():
         return redirect(url_for("index"))
 
