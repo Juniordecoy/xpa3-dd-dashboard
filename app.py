@@ -68,6 +68,17 @@ def init_db_and_seed():
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS door_state_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    door INTEGER NOT NULL,
+                    location TEXT,
+                    truck_type TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                """
+            )
             # seed if empty (so a cold start has persistent state)
             cur.execute("SELECT COUNT(*) FROM door_state;")
             count = cur.fetchone()[0]
@@ -135,6 +146,20 @@ def save_door_to_db(door_num: int, location: str, truck_type: str | None):
             )
     conn.close()
 
+def log_door_to_db(door_num: int, location: str, truck_type: str | None):
+    conn = get_db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO door_state_log (door, location, truck_type, updated_at)
+                VALUES (%s, %s, %s, NOW());
+                """,
+                (door_num, location, truck_type),
+            )
+    conn.close()
 
 # ---- DATA (your board) ----
 front = {
@@ -271,7 +296,6 @@ def build_location_options():
 
     return sorted(locs)
 
-
 # ---- Startup: init DB + load state ----
 # DB is the source of truth on Render. If DB is unavailable, app still runs with defaults.
 init_db_and_seed()
@@ -312,23 +336,27 @@ def update_location():
     if door_num not in doors:
         return redirect(url_for("index"))
 
+    # allow blank
     if loc in ["", "—", "---", "----"]:
         loc = "—"
 
+    # update in-memory
     if door_num in front:
         front[door_num] = loc
     else:
         back[door_num] = loc
 
-    if is_blank_loc(loc) and door_num in door_truck_type:
+    # if blank location, clear truck override
+    if is_blank_loc(loc):
         door_truck_type.pop(door_num, None)
 
-    # Persist
-    save_door_to_db(door_num, loc, door_truck_type.get(door_num))
-    append_update_to_csv(door_num, loc, door_truck_type.get(door_num))
+    truck = door_truck_type.get(door_num)
+
+    # Persist snapshot + log history
+    save_door_to_db(door_num, loc, truck)
+    log_door_to_db(door_num, loc, truck)
 
     return redirect(url_for("index"))
-
 
 @app.post("/override-truck")
 def override_truck():
@@ -344,27 +372,27 @@ def override_truck():
 
     loc = all_doors()[door_num]
 
-    # If door is blank, don't set override
+    # If door is blank, don't allow override
     if is_blank_loc(loc):
         door_truck_type.pop(door_num, None)
         save_door_to_db(door_num, loc, None)
-        append_update_to_csv(door_num, loc, None)
+        log_door_to_db(door_num, loc, None)
         return redirect(url_for("index"))
 
     # Clear override option
     if truck == "AUTO":
         door_truck_type.pop(door_num, None)
         save_door_to_db(door_num, loc, None)
-        append_update_to_csv(door_num, loc, None)
+        log_door_to_db(door_num, loc, None)
         return redirect(url_for("index"))
 
+    # Set override
     if truck in TRUCK_TYPES:
         door_truck_type[door_num] = truck
         save_door_to_db(door_num, loc, truck)
-        append_update_to_csv(door_num, loc, truck)
+        log_door_to_db(door_num, loc, truck)
 
     return redirect(url_for("index"))
-
 
 @app.get("/download-csv")
 def download_csv():
@@ -377,7 +405,11 @@ def download_csv():
     if conn:
         with conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT door, location, truck_type, updated_at FROM door_state ORDER BY door;")
+                cur.execute("""
+                    SELECT door, location, truck_type, updated_at
+                    FROM door_state_log
+                    ORDER BY updated_at ASC, id ASC;
+                """)
                 rows = cur.fetchall()
         conn.close()
 
@@ -391,7 +423,7 @@ def download_csv():
         return Response(
             csv_bytes,
             mimetype="text/csv",
-            headers={"Content-Disposition": "attachment; filename=door_state_snapshot.csv"},
+            headers={"Content-Disposition": "attachment; filename=door_state_log.csv"},
         )
 
     # fallback: download local log file if present
