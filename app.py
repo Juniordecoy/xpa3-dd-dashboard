@@ -1,13 +1,140 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file
-from datetime import datetime
+from __future__ import annotations
+
+from flask import Flask, render_template, request, redirect, url_for, send_file, Response
+from datetime import datetime, timezone
 import os
 import csv
-from zoneinfo import ZoneInfo
+import io
 
-EASTERN = ZoneInfo("America/New_York")
+# --- Timezone (DST-safe when tzdata is available) ---
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+    EASTERN = ZoneInfo("America/New_York")
+except Exception:
+    EASTERN = None  # fallback if tzdata missing on Windows
+
+def now_str(with_tz_label: bool = False) -> str:
+    if EASTERN:
+        s = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S")
+        return f"{s} ET" if with_tz_label else s
+    # fallback so app never crashes
+    s = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return f"{s} UTC" if with_tz_label else s
+
 
 app = Flask(__name__)
+
+# Local CSV log (handy locally; NOT reliable on Render free tier disk)
 CSV_LOG_PATH = "door_state_log.csv"
+
+
+# ---- DB (Render Postgres) ----
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except Exception:
+    psycopg2 = None
+    RealDictCursor = None
+
+
+def get_db_conn():
+    """Return a psycopg2 connection if DATABASE_URL is set and psycopg2 is installed."""
+    if psycopg2 is None:
+        return None
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        return None
+    # Render sometimes provides postgres:// but psycopg2 expects postgresql://
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(db_url)
+
+
+def init_db_and_seed():
+    """Create table and seed it with current in-memory defaults if empty."""
+    conn = get_db_conn()
+    if not conn:
+        return
+
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS door_state (
+                    door INTEGER PRIMARY KEY,
+                    location TEXT,
+                    truck_type TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                """
+            )
+            # seed if empty (so a cold start has persistent state)
+            cur.execute("SELECT COUNT(*) FROM door_state;")
+            count = cur.fetchone()[0]
+            if count == 0:
+                for d, loc in all_doors().items():
+                    cur.execute(
+                        """
+                        INSERT INTO door_state (door, location, truck_type, updated_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (door) DO NOTHING;
+                        """,
+                        (d, loc, door_truck_type.get(d)),
+                    )
+    conn.close()
+
+
+def load_state_from_db():
+    conn = get_db_conn()
+    if not conn:
+        return False
+
+    with conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT door, location, truck_type FROM door_state;")
+            rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return True  # DB reachable, but empty (seed happens in init)
+
+    for r in rows:
+        d = int(r["door"])
+        loc = r["location"] or "—"
+        trk = (r.get("truck_type") or "").strip().upper() or None
+
+        if d in front:
+            front[d] = loc
+        elif d in back:
+            back[d] = loc
+
+        if trk:
+            door_truck_type[d] = trk
+        else:
+            door_truck_type.pop(d, None)
+
+    return True
+
+
+def save_door_to_db(door_num: int, location: str, truck_type: str | None):
+    conn = get_db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO door_state (door, location, truck_type, updated_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (door) DO UPDATE SET
+                    location = EXCLUDED.location,
+                    truck_type = EXCLUDED.truck_type,
+                    updated_at = NOW();
+                """,
+                (door_num, location, truck_type),
+            )
+    conn.close()
+
 
 # ---- DATA (your board) ----
 front = {
@@ -65,7 +192,7 @@ truck_by_location = {
 DEFAULT_TRUCK = "AZNG"
 
 # Door override truck types: {door_number: "JBHU"/"XPOU"/"AZNU"/"AZNG"}
-door_truck_type = {}
+door_truck_type: dict[int, str] = {}
 
 TRUCK_TYPES = ["AZNG", "AZNU", "JBHU", "XPOU"]
 
@@ -80,15 +207,16 @@ ALL_LOCATIONS = sorted({
     "IB", "CLOSED", "Empty", "Empty Door",
 })
 
-# ---- HELPERS ----
+
+# ---- CSV LOG HELPERS (optional) ----
 def append_update_to_csv(door: int, location: str, truck_type: str | None):
+    """Append-only log. Handy locally; on Render free tier it may reset on restart."""
     file_exists = os.path.exists(CSV_LOG_PATH)
 
     with open(CSV_LOG_PATH, "a", newline="", encoding="utf-8") as f:
         fieldnames = ["door", "location", "truck_type", "updated_at"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
 
-        # write header once
         if not file_exists:
             writer.writeheader()
 
@@ -96,57 +224,36 @@ def append_update_to_csv(door: int, location: str, truck_type: str | None):
             "door": door,
             "location": location,
             "truck_type": truck_type or "",
-            "updated_at": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": now_str(with_tz_label=False),
         })
 
-def load_state_from_csv_log():
-    if not os.path.exists(CSV_LOG_PATH):
-        return
-
-    with open(CSV_LOG_PATH, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            d = int(row["door"])
-            loc = row["location"] or "—"
-            trk = (row.get("truck_type") or "").strip().upper() or None
-
-            if d in front:
-                front[d] = loc
-            elif d in back:
-                back[d] = loc
-
-            if trk:
-                door_truck_type[d] = trk
-            else:
-                door_truck_type.pop(d, None)
 
 def normalize_loc(loc: str) -> str:
     return (loc or "").strip().upper()
 
+
 def is_blank_loc(loc: str) -> bool:
-    loc = normalize_loc(loc)
-    # treat anything non-alphanumeric as blank (—, ---, etc)
-    return (loc == "") or (not loc.isalnum())
+    loc = (loc or "").strip()
+    # treat empty or non-alphanumeric as blank (—, ---, etc)
+    return (loc == "") or (not loc.replace(" ", "").isalnum())
+
 
 def get_truck_for_door(door_num: int, loc: str) -> str:
-    # If blank spot, no truck
     if is_blank_loc(loc):
         return ""
-    # If door has a forced override, use it
     if door_num in door_truck_type:
         return door_truck_type[door_num]
-    # Else determine by location, fallback default
     return truck_by_location.get(normalize_loc(loc), DEFAULT_TRUCK)
 
-def all_doors():
-    # combine for easy lookup/validation
-    combined = {}
+
+def all_doors() -> dict[int, str]:
+    combined: dict[int, str] = {}
     combined.update(front)
     combined.update(back)
     return combined
 
+
 def build_location_options():
-    # Collect from current board + from your truck map (so you can pick even if not currently on board)
     locs = set()
 
     for loc in front.values():
@@ -159,23 +266,25 @@ def build_location_options():
         if loc.isalnum():
             locs.add(loc)
 
-    # Also include anything you've already defined in truck_by_location
     for loc in truck_by_location.keys():
         locs.add(normalize_loc(loc))
 
     return sorted(locs)
 
-load_state_from_csv_log()
+
+# ---- Startup: init DB + load state ----
+# DB is the source of truth on Render. If DB is unavailable, app still runs with defaults.
+init_db_and_seed()
+load_state_from_db()
+
 
 # ---- ROUTES ----
 @app.get("/")
 def index():
-    ts = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S ET")
+    ts = now_str(with_tz_label=True)
 
     front_rows = [(d, front[d], get_truck_for_door(d, front[d])) for d in sorted(front)]
     back_rows = [(d, back[d], get_truck_for_door(d, back[d])) for d in sorted(back)]
-
-    location_options = build_location_options()
 
     return render_template(
         "index.html",
@@ -184,16 +293,16 @@ def index():
         back_rows=back_rows,
         truck_types=TRUCK_TYPES,
         overrides=door_truck_type,
-        location_options=ALL_LOCATIONS,  # ✅ use master list
+        location_options=ALL_LOCATIONS,  # use master list
         door_options=sorted(all_doors().keys()),
     )
+
 
 @app.post("/update-location")
 def update_location():
     door = request.form.get("door", "").strip()
     loc = normalize_loc(request.form.get("location", ""))
 
-    # Basic safety: door must be a number and exist
     if not door.isdigit():
         return redirect(url_for("index"))
 
@@ -203,22 +312,23 @@ def update_location():
     if door_num not in doors:
         return redirect(url_for("index"))
 
-    # If user wants blank, allow "" or "—"
     if loc in ["", "—", "---", "----"]:
         loc = "—"
 
-    # Update the correct side
     if door_num in front:
         front[door_num] = loc
     else:
         back[door_num] = loc
 
-    # Optional: if it becomes blank, remove any forced override
     if is_blank_loc(loc) and door_num in door_truck_type:
         door_truck_type.pop(door_num, None)
 
+    # Persist
+    save_door_to_db(door_num, loc, door_truck_type.get(door_num))
     append_update_to_csv(door_num, loc, door_truck_type.get(door_num))
+
     return redirect(url_for("index"))
+
 
 @app.post("/override-truck")
 def override_truck():
@@ -229,42 +339,73 @@ def override_truck():
         return redirect(url_for("index"))
 
     door_num = int(door)
-
     if door_num not in all_doors():
         return redirect(url_for("index"))
 
-    # If door is blank, don't set override
     loc = all_doors()[door_num]
+
+    # If door is blank, don't set override
     if is_blank_loc(loc):
         door_truck_type.pop(door_num, None)
+        save_door_to_db(door_num, loc, None)
         append_update_to_csv(door_num, loc, None)
         return redirect(url_for("index"))
 
     # Clear override option
     if truck == "AUTO":
         door_truck_type.pop(door_num, None)
+        save_door_to_db(door_num, loc, None)
         append_update_to_csv(door_num, loc, None)
         return redirect(url_for("index"))
 
     if truck in TRUCK_TYPES:
         door_truck_type[door_num] = truck
-        append_update_to_csv(door_num, loc, None)
+        save_door_to_db(door_num, loc, truck)
+        append_update_to_csv(door_num, loc, truck)
+
     return redirect(url_for("index"))
+
 
 @app.get("/download-csv")
 def download_csv():
-    path = CSV_LOG_PATH  # or "door_state_log.csv"
-    if not os.path.exists(path):
-        # optional: create an empty file so download still works
-        with open(path, "w", encoding="utf-8") as f:
+    """Download a snapshot CSV of current state.
+
+    If Postgres is available, export from DB (survives Render sleeps).
+    Otherwise, fall back to the local CSV log file.
+    """
+    conn = get_db_conn()
+    if conn:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT door, location, truck_type, updated_at FROM door_state ORDER BY door;")
+                rows = cur.fetchall()
+        conn.close()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["door", "location", "truck_type", "updated_at"])
+        for r in rows:
+            writer.writerow([r["door"], r["location"], r["truck_type"] or "", r["updated_at"]])
+
+        csv_bytes = output.getvalue().encode("utf-8")
+        return Response(
+            csv_bytes,
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=door_state_snapshot.csv"},
+        )
+
+    # fallback: download local log file if present
+    if not os.path.exists(CSV_LOG_PATH):
+        with open(CSV_LOG_PATH, "w", encoding="utf-8") as f:
             f.write("door,location,truck_type,updated_at\n")
 
     return send_file(
-        path,
+        CSV_LOG_PATH,
         as_attachment=True,
-        download_name=os.path.basename(path),
+        download_name=os.path.basename(CSV_LOG_PATH),
         mimetype="text/csv",
     )
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
