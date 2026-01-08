@@ -6,6 +6,33 @@
   <title>Aspire XDock - XPA3</title>
 
   <style>
+    /* NEW: wrapper for sidebar + main content */
+    .layout {
+      display: grid;
+      gap: 14px;
+    }
+
+    /* Mobile: stack */
+    @media (max-width: 899px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Tablet/Desktop: forms left, tables right */
+    @media (min-width: 900px) {
+      .layout {
+        grid-template-columns: 360px 1fr;
+        align-items: start;
+      }
+
+      /* left column: stack the two form cards */
+      .actions {
+        grid-template-columns: 1fr;
+        margin-top: 0;
+      }
+    }
+
     :root{
       --bg: #ffffff;          /* page background */
       --panel: #0f172a;       /* blue-ish table cards */
@@ -56,8 +83,7 @@
 
     .empty { color: var(--muted); font-style: italic; }
 
-    .actions { margin-top: 14px; display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    @media (max-width: 760px){ .actions { grid-template-columns: 1fr; } }
+    .actions { margin-top: 14px; display:grid; grid-template-columns: 1fr; gap: 14px; }
 
     form { padding: 14px; }
     .form-title { font-weight: 800; margin-bottom: 10px; }
@@ -99,6 +125,10 @@
       color: #dc2626;        /* red */
       font-weight: 700;
     }
+    .door-select{
+      min-width: 140px;
+      max-height: 180px;   /* makes long lists manageable */
+    }
 
   </style>
 </head>
@@ -109,124 +139,149 @@
       <div class="timestamp">Updated: {{ timestamp }}</div>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <h2>Front</h2>
-        <table>
-          <thead>
-            <tr>
-              <th class="col-num">Door</th>
-              <th class="col-loc">Location</th>
-              <th>Truck</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for door, loc, truck in front_rows %}
-            <tr>
-              <td>{{ door }}</td>
-              <td class="
-                {% if loc == 'CLOSED' %}loc-closed
-                {% elif not loc.isalnum() %}empty
-                {% endif %}
-              ">{{ loc }}</td>
-              <td>
-                {% if truck %}
-                  <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
-                  {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+    <div class="layout">
+
+      <!-- LEFT SIDEBAR (forms) -->
+      <div class="actions">
+        <div class="card">
+          <h2>Update door location</h2>
+          <form method="POST" action="/update-location">
+            <div class="row">
+              <div>
+                <label for="door1">Door #</label>
+                <select id="door1" name="door" class="door-select" required>
+                  {% for d in door_options %}
+                    <option value="{{ d }}">{{ d }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div>
+                <label for="loc1">Location</label>
+                <select id="loc1" name="location">
+                  <option value="—">— (blank)</option>
+                  {% for loc in location_options %}
+                    <option value="{{ loc }}">{{ loc }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div style="align-self:flex-end;">
+                <button class="btn" type="submit">Update</button>
+              </div>
+            </div>
+            <div class="note">
+              Tip: Put <b>—</b> to clear a door. Location auto-uppercase.
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Force truck type (override)</h2>
+          <form method="POST" action="/override-truck">
+            <div class="row">
+              <div>
+                <label for="door2">Door #</label>
+                <select id="door2" name="door" class="door-select" required>
+                  {% for d in door_options %}
+                    <option value="{{ d }}">{{ d }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div>
+                <label for="truck2">Truck type</label>
+                <select id="truck2" name="truck">
+                  <option value="AUTO">AUTO (use location)</option>
+                  {% for t in truck_types %}
+                    <option value="{{ t }}">{{ t }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div style="align-self:flex-end;">
+                <button class="btn secondary" type="submit">Apply</button>
+              </div>
+            </div>
+            <div class="note">
+              “AUTO” clears the forced override and goes back to location-based logic.
+            </div>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Export</h2>
+          <form method="GET" action="/download-csv">
+            <button class="btn secondary" type="submit">Download CSV</button>
+            <div class="note">
+              Downloads the current dock door log.
+            </div>
+          </form>
+        </div>
       </div>
 
-      <div class="card">
-        <h2>Back</h2>
-        <table>
-          <thead>
-            <tr>
-              <th class="col-num">Door</th>
-              <th class="col-loc">Location</th>
-              <th>Truck</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for door, loc, truck in back_rows %}
-            <tr>
-              <td>{{ door }}</td>
-              <td class="
-                {% if loc == 'CLOSED' %}loc-closed
-                {% elif not loc.isalnum() %}empty
-                {% endif %}
-              ">{{ loc }}</td>
-              <td>
-                {% if truck %}
-                  <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
-                  {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <!-- RIGHT MAIN (tables) -->
+      <div class="grid">
+        <div class="card">
+          <h2>Front</h2>
+          <table>
+            <thead>
+              <tr>
+                <th class="col-num">Door</th>
+                <th class="col-loc">Location</th>
+                <th>Truck</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for door, loc, truck in front_rows %}
+              <tr>
+                <td>{{ door }}</td>
+                <td class="
+                  {% if loc == 'CLOSED' %}loc-closed
+                  {% elif not loc.isalnum() %}empty
+                  {% endif %}
+                ">{{ loc }}</td>
+                <td>
+                  {% if truck %}
+                    <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
+                    {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
 
-    <!-- ACTIONS -->
-    <div class="actions">
-      <div class="card">
-        <h2>Update door location</h2>
-        <form method="POST" action="/update-location">
-          <div class="row">
-            <div>
-              <label for="door1">Door #</label>
-              <input id="door1" name="door" placeholder="e.g. 127" />
-            </div>
-            <div>
-              <label for="loc1">Location</label>
-              <select id="loc1" name="location">
-                <option value="—">— (blank)</option>
-                {% for loc in location_options %}
-                  <option value="{{ loc }}">{{ loc }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div style="align-self:flex-end;">
-              <button class="btn" type="submit">Update</button>
-            </div>
-          </div>
-          <div class="note">
-            Tip: Put <b>—</b> to clear a door. Location auto-uppercase.
-          </div>
-        </form>
-      </div>
-
-      <div class="card">
-        <h2>Force truck type (override)</h2>
-        <form method="POST" action="/override-truck">
-          <div class="row">
-            <div>
-              <label for="door2">Door #</label>
-              <input id="door2" name="door" placeholder="e.g. 125" />
-            </div>
-            <div>
-              <label for="truck2">Truck type</label>
-              <select id="truck2" name="truck">
-                <option value="AUTO">AUTO (use location)</option>
-                {% for t in truck_types %}
-                  <option value="{{ t }}">{{ t }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div style="align-self:flex-end;">
-              <button class="btn secondary" type="submit">Apply</button>
-            </div>
-          </div>
-          <div class="note">
-            “AUTO” clears the forced override and goes back to location-based logic.
-          </div>
-        </form>
+        <div class="card">
+          <h2>Back</h2>
+          <table>
+            <thead>
+              <tr>
+                <th class="col-num">Door</th>
+                <th class="col-loc">Location</th>
+                <th>Truck</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for door, loc, truck in back_rows %}
+              <tr>
+                <td>{{ door }}</td>
+                <td class="
+                  {% if loc == 'CLOSED' %}loc-closed
+                  {% elif not loc.isalnum() %}empty
+                  {% endif %}
+                ">{{ loc }}</td>
+                <td>
+                  {% if truck %}
+                    <span class="chip chip-{{ truck|lower|trim }}">{{ truck }}</span>
+                    {% if overrides.get(door) %}<span class="chip">FORCED</span>{% endif %}
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
