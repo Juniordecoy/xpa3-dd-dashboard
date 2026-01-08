@@ -2,6 +2,9 @@ from flask import Flask, render_template, request, redirect, url_for, send_file
 from datetime import datetime
 import os
 import csv
+from zoneinfo import ZoneInfo
+
+EASTERN = ZoneInfo("America/New_York")
 
 app = Flask(__name__)
 CSV_LOG_PATH = "door_state_log.csv"
@@ -93,7 +96,7 @@ def append_update_to_csv(door: int, location: str, truck_type: str | None):
             "door": door,
             "location": location,
             "truck_type": truck_type or "",
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S"),
         })
 
 def load_state_from_csv_log():
@@ -167,7 +170,7 @@ load_state_from_csv_log()
 # ---- ROUTES ----
 @app.get("/")
 def index():
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M:%S ET")
 
     front_rows = [(d, front[d], get_truck_for_door(d, front[d])) for d in sorted(front)]
     back_rows = [(d, back[d], get_truck_for_door(d, back[d])) for d in sorted(back)]
