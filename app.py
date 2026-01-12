@@ -210,6 +210,7 @@ truck_by_location = {
     "XLA3": "JBHU",
     "GYR3": "JBHU",
     "SMF3": "JBHU",
+    "MEM1": "JBHU",
     "CLOSED": "",
     "Empty Door": "",
 }
