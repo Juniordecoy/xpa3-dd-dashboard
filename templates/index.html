@@ -285,5 +285,31 @@
       </div>
     </div>
   </div>
+  <script>
+  // Ping every 9 minutes (Render free idle is typically ~15 min)
+    const PING_MS = 9 * 60 * 1000;
+  
+    async function ping() {
+      try {
+        // cache: "no-store" so it actually hits server, not just cache
+        await fetch("/health", { cache: "no-store" });
+      } catch (e) {
+        // ignore; next ping will retry
+        console.log("Ping failed:", e);
+      }
+    }
+  
+    // Start shortly after load, then repeat
+    setTimeout(() => {
+      ping();
+      setInterval(ping, PING_MS);
+    }, 5000);
+  
+    // Optional: don't ping if tab isn't visible
+    document.addEventListener("visibilitychange", () => {
+      // If you want: only ping when visible.
+      // (Leaving this empty keeps it simple; intervals still run in many browsers.)
+    });
+  </script>
 </body>
 </html>
