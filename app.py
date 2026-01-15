@@ -440,6 +440,61 @@ def download_csv():
         mimetype="text/csv",
     )
 
+
+@app.post("/combine-csv")
+def combine_csv():
+    """Combine uploaded CSV files into one CSV and add a source_file column.
+
+    Expects a multipart form field named 'csv_files' with one or more CSV files.
+    Assumes consistent columns across files (first file defines the column order).
+    """
+    files = request.files.getlist("csv_files")
+    if not files:
+        return redirect(url_for("index"))
+
+    # Read and combine
+    combined_rows = []
+    base_fieldnames = None
+
+    for f in files:
+        if not f or not getattr(f, "filename", ""):
+            continue
+
+        # Decode bytes -> text
+        text_stream = io.TextIOWrapper(f.stream, encoding="utf-8", newline="")
+        reader = csv.DictReader(text_stream)
+
+        if reader.fieldnames is None:
+            continue
+
+        if base_fieldnames is None:
+            base_fieldnames = reader.fieldnames
+        else:
+            # If a file has different columns, still try to read it; missing keys become blank.
+            # (User said columns should match "at least at first".)
+            pass
+
+        for row in reader:
+            row_out = {k: (row.get(k) or "") for k in base_fieldnames}
+            row_out["source_file"] = f.filename
+            combined_rows.append(row_out)
+
+    if not base_fieldnames:
+        return redirect(url_for("index"))
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=base_fieldnames + ["source_file"], extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(combined_rows)
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    return Response(
+        csv_bytes,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=combined.csv"},
+    )
+
+
 @app.get("/health")
 def health():
     return jsonify(ok=True)
