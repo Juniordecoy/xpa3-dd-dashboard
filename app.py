@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, render_template, request, redirect, url_for, send_file, Response
+from flask import Flask, render_template, request, redirect, url_for, send_file, Response, jsonify 
 from datetime import datetime, timezone
 import os
 import csv
@@ -210,6 +210,8 @@ truck_by_location = {
     "XLA3": "JBHU",
     "GYR3": "JBHU",
     "SMF3": "JBHU",
+    "MEM1": "JBHU",
+    "LAS1": "XPOU",
     "CLOSED": "",
     "Empty Door": "",
 }
@@ -438,6 +440,9 @@ def download_csv():
         mimetype="text/csv",
     )
 
+@app.get("/health")
+def health():
+    return jsonify(ok=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

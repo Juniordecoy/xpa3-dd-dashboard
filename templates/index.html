@@ -72,14 +72,14 @@
       font-weight:800;
       font-size:11px;
       letter-spacing:0.3px;
-      color:#fff;
+      color:#000;
     }
 
     /* Truck colors */
-    .chip-azng{ background:#1d4ed8; }  /* blue */
-    .chip-aznu{ background:#7c3aed; }  /* purple */
-    .chip-jbhu{ background:#16a34a; }  /* green */
-    .chip-xpou{ background:#f59e0b; color:#111827; } /* amber w/ dark text */
+    .chip-azng{ background:#92d050; }  /* excel green */
+    .chip-aznu{ background:#76d7c4; }  /* teal / aqua */
+    .chip-jbhu{ background:#f4b183; }  /* excel orange */
+    .chip-xpou{ background:#5b9bd5; } /* excel blue */
 
     .empty { color: var(--muted); font-style: italic; }
 
@@ -285,5 +285,31 @@
       </div>
     </div>
   </div>
+  <script>
+  // Ping every 9 minutes (Render free idle is typically ~15 min)
+    const PING_MS = 9 * 60 * 1000;
+  
+    async function ping() {
+      try {
+        // cache: "no-store" so it actually hits server, not just cache
+        await fetch("/health", { cache: "no-store" });
+      } catch (e) {
+        // ignore; next ping will retry
+        console.log("Ping failed:", e);
+      }
+    }
+  
+    // Start shortly after load, then repeat
+    setTimeout(() => {
+      ping();
+      setInterval(ping, PING_MS);
+    }, 5000);
+  
+    // Optional: don't ping if tab isn't visible
+    document.addEventListener("visibilitychange", () => {
+      // If you want: only ping when visible.
+      // (Leaving this empty keeps it simple; intervals still run in many browsers.)
+    });
+  </script>
 </body>
 </html>
